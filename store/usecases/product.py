@@ -6,6 +6,8 @@ from store.db.mongo import db_client
 from store.models.product import ProductModel
 from store.schemas.product import ProductIn, ProductOut, ProductUpdate, ProductUpdateOut
 from store.core.exceptions import NotFoundException
+from datetime import datetime
+from typing import Optional
 
 
 class ProductUsecase:
@@ -28,13 +30,30 @@ class ProductUsecase:
 
         return ProductOut(**result)
 
-    async def query(self) -> List[ProductOut]:
-        return [ProductOut(**item) async for item in self.collection.find()]
+    async def query(self, price_min: Optional[float] = None, price_max: Optional[float] = None) -> List[ProductOut]:
+        query_filter = {}
+        if price_min is not None or price_max is not None:
+            query_filter["price"] = {}
+            if price_min is not None:
+                query_filter["price"]["$gt"] = price_min
+            if price_max is not None:
+                query_filter["price"]["$lt"] = price_max
+        return [ProductOut(**item) async for item in self.collection.find(query_filter)]
 
     async def update(self, id: UUID, body: ProductUpdate) -> ProductUpdateOut:
+        # Busca o produto antes de atualizar
+        product = await self.collection.find_one({"id": id})
+        if not product:
+            raise NotFoundException(message=f"Product not found with filter: {id}")
+
+        update_data = body.model_dump(exclude_none=True)
+        # Atualiza o campo updated_at para agora, a menos que seja enviado manualmente
+        if "updated_at" not in update_data:
+            update_data["updated_at"] = datetime.utcnow()
+
         result = await self.collection.find_one_and_update(
             filter={"id": id},
-            update={"$set": body.model_dump(exclude_none=True)},
+            update={"$set": update_data},
             return_document=pymongo.ReturnDocument.AFTER,
         )
 
